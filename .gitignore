@@ -1,0 +1,16 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.csv
+*.parquet
+.idea/
+*.json
+data/filtered/search_recipe.json
+data/cleaning_recipe.json
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Trashes
