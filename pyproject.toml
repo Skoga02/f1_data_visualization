@@ -1,7 +1,18 @@
 [project]
-name = "f1-data-visualization"
+name = "f1-design-to-survive"
 version = "0.1.0"
-description = "Add your description here"
-readme = "README.md"
-requires-python = ">=3.12"
-dependencies = []
+requires-python = ">=3.11"
+
+dependencies = [
+    "requests>=2.31.0",
+    "pandas>=2.1.0",
+    "duckdb>=0.10.0",
+    "matplotlib>=3.8.0",
+    "plotly>=5.18.0",
+    "streamlit>=1.32.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ipykernel>=6.0.0",
+]
