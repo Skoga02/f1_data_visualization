@@ -1,112 +1,87 @@
-import duckdb
 import time
-import requests
 import pandas as pd
+import os
+import sys
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-# Fetches data from the OpenF1 API and returns it as a pandas DataFrame.
-# Retries up to 3 times with increasing wait time if rate-limited (429 error).
-def fetch_openf1(endpoint, params={}, retries=3):
-    url = f"https://api.openf1.org/v1/{endpoint}"
-    for attempt in range(retries):
-        r = requests.get(url, params=params)
-        if r.status_code == 429:
-            wait = 10 * (attempt + 1)
-            print(f"Rate limited, waiting {wait}s...")
-            time.sleep(wait)
-            continue
-        r.raise_for_status()
-        return pd.DataFrame(r.json())
-    raise Exception(f"Failed after {retries} retries: {endpoint}")
+from utils.openf1 import fetch_openf1, add_driver_session_key, get_monza_sessions
 
+os.makedirs("data/csv", exist_ok=True)
 
-# ── 1. GET RACE SESSIONS ───────────────────────────────────────────────────────
-
-# Fetch all Monza sessions and keep only Race sessions up to 2025
-sessions_df = fetch_openf1("sessions", {"location": "Monza"})
-race_sessions = sessions_df[
-    (sessions_df["session_name"] == "Race") & (sessions_df["year"] <= 2025)
-].reset_index(drop=True)
-
+# ── 1. Get race sessions ───────────────────────────────────────────────────────
+race_sessions = get_monza_sessions(session_types=["Race"])
 print(race_sessions[["session_key", "session_name", "date_start", "year"]])
 
-
-# ── 2. FETCH STINTS AND DRIVERS PER YEAR ──────────────────────────────────────
-
-all_stints = []
-all_drivers = []
+# ── 2. Fetch stints, drivers and pit stop times ───────────────────────────────
+all_stints, all_drivers, all_pits = [], [], []
 
 for _, session in race_sessions.iterrows():
-    key = session["session_key"]
-    year = session["year"]
+    key, year = session["session_key"], session["year"]
     print(f"Fetching {year} Monza Race (session_key: {key})...")
 
-    # Stints = each driver's time on one set of tyres
     all_stints.append(fetch_openf1("stints", {"session_key": key}).assign(year=year))
     time.sleep(1.0)
 
-    # Drivers = name, team, and number for each driver in the session
     all_drivers.append(fetch_openf1("drivers", {"session_key": key}).assign(year=year))
     time.sleep(1.0)
 
-# Combine all years into one table
+    pit = fetch_openf1("pit", {"session_key": key})
+    if not pit.empty:
+        pit["year"] = year
+        all_pits.append(pit)
+    time.sleep(1.0)
+
 stints_df = pd.concat(all_stints, ignore_index=True)
 drivers_df = pd.concat(all_drivers, ignore_index=True)
+pits_df = pd.concat(all_pits, ignore_index=True) if all_pits else pd.DataFrame()
 
-
-# ── 3. SAVE TO DUCKDB ─────────────────────────────────────────────────────────
-
-con = duckdb.connect("data/pitstops_monza.duckdb")
-con.execute(
-    """
-    CREATE OR REPLACE TABLE stints AS
-    SELECT *, lap_end - lap_start + 1 AS stint_length
-    FROM stints_df
-"""
-)
-con.execute("CREATE OR REPLACE TABLE drivers AS SELECT * FROM drivers_df")
-con.checkpoint()  # Force save to disk
-con.close()
-print("Saved to pitstops_monza.duckdb")
-
-
-# ── 4. CALCULATE PIT STOP LAP PER DRIVER (2025 only) ─────────────────────────
-
+# ── 3. Export CSV files for Power BI ──────────────────────────────────────────
 stints_df["stint_length"] = stints_df["lap_end"] - stints_df["lap_start"] + 1
 
-# Pit stop lap = last lap of each stint except the final one
-# e.g. if a driver pitted after lap 22, lap_end of stint 1 = 22
-pit_laps_df = (
-    stints_df[stints_df["year"] == 2025]  # filter to 2025 only
-    .groupby("driver_number")
-    .apply(lambda x: x.sort_values("stint_number").iloc[:-1]["lap_end"])
-    .reset_index(level=0)
-    .rename(columns={"lap_end": "pit_lap"})
-    .merge(
-        drivers_df[
-            ["driver_number", "name_acronym", "full_name", "team_name"]
-        ].drop_duplicates(),
-        on="driver_number",
+
+# Helper: per-year driver info so teams are correct for each season
+def get_drivers_year(year):
+    return drivers_df[drivers_df["year"] == year][
+        ["driver_number", "name_acronym", "full_name", "team_name"]
+    ].drop_duplicates()
+
+
+# stints.csv — one row per stint with compound, lap range, and driver/team info.
+stints_export_all = []
+for year in [2023, 2024, 2025]:
+    s_year = stints_df[stints_df["year"] == year].merge(
+        get_drivers_year(year), on="driver_number", how="left"
+    )
+    stints_export_all.append(s_year)
+stints_export = pd.concat(stints_export_all, ignore_index=True)
+
+# pit_with_compound.csv — one row per pit stop, with the compound that was fitted afterwards.
+# A pit on lap N means the new stint starts on lap N+1 — join on that.
+if not pits_df.empty:
+    pits_df["stint_lap_start"] = pits_df["lap_number"] + 1
+    pit_compound_df = pits_df.merge(
+        stints_df[
+            ["driver_number", "session_key", "lap_start", "compound", "stint_number"]
+        ],
+        left_on=["driver_number", "session_key", "stint_lap_start"],
+        right_on=["driver_number", "session_key", "lap_start"],
         how="left",
     )
-)
+    pit_compound_all = []
+    for year in [2023, 2024, 2025]:
+        pc_year = pit_compound_df[pit_compound_df["year"] == year].merge(
+            get_drivers_year(year), on="driver_number", how="left"
+        )
+        pit_compound_all.append(pc_year)
+    pit_compound_export = pd.concat(pit_compound_all, ignore_index=True)
+    pit_compound_export = pit_compound_export.dropna(
+        subset=["pit_duration", "compound"]
+    )
+    pit_compound_export.to_csv("data/csv/pit_with_compound.csv", index=False)
 
-
-# ── 5. EXPORT CSV FILES FOR POWER BI (2025 only) ─────────────────────────────
-
-# Graf 1: Tyre strategy — one row per stint with compound and lap range
-stints_export = stints_df[stints_df["year"] == 2025].merge(
-    drivers_df[
-        ["driver_number", "name_acronym", "full_name", "team_name"]
-    ].drop_duplicates(),
-    on="driver_number",
-    how="left",
-)
-
-# Graf 2: Pit stop lap per driver — when each driver made their stop
-pit_laps_df.to_csv("data/csv/powerbi_pit_stops.csv", index=False)
-stints_export.to_csv("data/csv/powerbi_stints.csv", index=False)
+stints_export.to_csv("data/csv/stints.csv", index=False)
 
 print("CSV files saved in data/csv/:")
-print("  powerbi_pit_stops.csv  -> Pit stop lap per driver (2025)")
-print("  powerbi_stints.csv     -> Tyre strategy per stint (2025)")
+print("stints.csv")
+print("pit_with_compound.csv")
