@@ -5,7 +5,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from utils.openf1 import fetch_openf1, add_driver_session_key, get_monza_sessions
+from utils.openf1 import fetch_openf1, get_monza_sessions
 
 os.makedirs("data/csv", exist_ok=True)
 
@@ -40,14 +40,14 @@ pits_df = pd.concat(all_pits, ignore_index=True) if all_pits else pd.DataFrame()
 stints_df["stint_length"] = stints_df["lap_end"] - stints_df["lap_start"] + 1
 
 
-# Helper: per-year driver info so teams are correct for each season
+# Per-year driver info — teams change between seasons
 def get_drivers_year(year):
     return drivers_df[drivers_df["year"] == year][
         ["driver_number", "name_acronym", "full_name", "team_name"]
     ].drop_duplicates()
 
 
-# stints.csv — one row per stint with compound, lap range, and driver/team info.
+# stints.csv — one row per stint
 stints_export_all = []
 for year in [2023, 2024, 2025]:
     s_year = stints_df[stints_df["year"] == year].merge(
@@ -56,8 +56,8 @@ for year in [2023, 2024, 2025]:
     stints_export_all.append(s_year)
 stints_export = pd.concat(stints_export_all, ignore_index=True)
 
-# pit_with_compound.csv — one row per pit stop, with the compound that was fitted afterwards.
-# A pit on lap N means the new stint starts on lap N+1 — join on that.
+# pit_with_compound.csv — one row per pit stop with the compound fitted after.
+# Pit on lap N → new stint starts lap N+1.
 if not pits_df.empty:
     pits_df["stint_lap_start"] = pits_df["lap_number"] + 1
     pit_compound_df = pits_df.merge(

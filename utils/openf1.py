@@ -1,11 +1,7 @@
 """
-utils/openf1.py
-
-Central DRY module for all OpenF1 API calls.
-Imported by all fetch scripts in the project.
-
-Usage:
-    from utils.openf1 import fetch_openf1, add_driver_session_key
+Fetches data from the OpenF1 API and returns a pandas DataFrame.
+Retries up to 3 times with increasing wait time if rate-limited (429).
+Add driver_session_key column (format: 44_9912).
 """
 
 import time
@@ -17,8 +13,7 @@ BASE_URL = "https://api.openf1.org/v1"
 
 def fetch_openf1(endpoint: str, params: dict = {}, retries: int = 3) -> pd.DataFrame:
     """
-    Fetches data from the OpenF1 API and returns a pandas DataFrame.
-    Retries up to 3 times with increasing wait time if rate-limited (429).
+    Fetches Monza sessions filtered by type and year. Session_types: ["Race"], ["Qualifying"], ["Race", "Qualifying"]s.
     """
     url = f"{BASE_URL}/{endpoint}"
     for attempt in range(retries):
