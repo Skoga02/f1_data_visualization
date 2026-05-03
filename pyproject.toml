@@ -1,7 +1,7 @@
 [project]
 name = "f1-data-visualization"
 version = "0.1.0"
-description = "Add your description here"
+description = "F1 Group 2 - DE & UX"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

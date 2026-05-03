@@ -14,4 +14,6 @@ data/cleaning_recipe.json
 .LSOverride
 ._*
 .Trashes
+# DuckDB
 *.duckdb
+*.wal
